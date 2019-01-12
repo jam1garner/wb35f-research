@@ -1,0 +1,101 @@
+Camera ip during "files from Smartphone" mode:
+192.168.101.1
+
+Open Ports during "Select Files from Smartphone" mode:
+49152/tcp
+49153/tcp
+
+-----------------------------------------------------
+
+Camera ip during "Remote viewfinder" mode:
+192.168.102.1
+
+Open Ports during "Remote viewfinder" mode:
+49152/tcp
+49153/tcp
+
+-----------------------------------------------------
+
+Camera HTTP endpoints exposed from the DHCP connection:
+
+method        url
+-----------------------
+ HEAD     /mode/control 
+ HEAD     /sp/control      // SelectivePush
+
+relevant code:
+
+
+/mode/control
+-------------
+ModeClient.java:77
+sb.append("HEAD /mode/control HTTP/1.1")
+    .append(HTTP.CRLF)
+    .append("User-Agent: SEC_MODE_")
+    .append(mac).append(HTTP.CRLF)
+    .append("Connection: Close")
+    .append(HTTP.CRLF)
+    .append("NTS : ")
+    .append(this.mNTS)
+    .append(HTTP.CRLF)
+    .append("Content-Length: 0")
+    .append(HTTP.CRLF)
+    .append("HOST-Mac : ")
+    .append(wifiInfo.getMacAddress().toLowerCase())
+    .append(HTTP.CRLF).append("HOST-Address : ")
+    .append(phoneIP)
+    .append(HTTP.CRLF)
+    .append("HOST-port : ")
+    .append(serverPort)
+    .append(HTTP.CRLF)
+    .append("HOST-PNumber : ")
+    .append(phoneNumber)
+    .append(HTTP.CRLF)
+    .append("Access-Method : ")
+    .append(accessMethod)
+    .append(HTTP.CRLF)
+    .append("CALLBACK: <http://")
+    .append(phoneIP)
+    .append(SOAP.DELIM)
+    .append(ModeServer.mServerPort)
+    .append("/eventCallback>")
+    .append(HTTP.CRLF)
+    .append(HTTP.CRLF);
+
+/sp/control
+-----------
+SelectivePush.java:2408
+sb.append("HEAD /sp/control HTTP/1.1")
+    .append(HTTP.CRLF)
+    .append("Host: 192.168.104.1:8100")
+    .append(HTTP.CRLF).append("User-Agent: SEC_SP_")
+    .append(wifiInfo.getMacAddress().toLowerCase())
+    .append(HTTP.CRLF).append("Data-Server : ")
+    .append(mPhoneIp).append(":18100")
+    .append(HTTP.CRLF).append("Data-Port : ")
+    .append("18100").append(HTTP.CRLF)
+    .append("NTS : alive")
+    .append(HTTP.CRLF).append("HOST-PNumber : ")
+    .append(CommonUtils.getLineNumber(getApplicationContext()))
+    .append(HTTP.CRLF).append("Access-Method : ")
+    .append(accessMethod)
+    .append("\r\n\r\n");
+
+Code notes:
+- Acronyms
+    * AP  - Authentication Protocol
+    * SP  - Selective Push
+    * CM  - Common
+    * RVF - Remote Viewfinder
+    * SSC - Samsung Smart Camera
+- Important files
+    * DatabaseManager.java
+    * Pullservice.java
+    * DeviceController.java
+    * ModeClient.java
+    * SelectivePush.java
+    * MobileLink.java
+    * DatabaseMedia.java
+
+
+
