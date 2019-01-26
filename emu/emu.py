@@ -4,18 +4,55 @@ from binascii import hexlify
 from unicorn import *
 from unicorn.mips_const import *
 
-import math
-def roundup(x):
-    return int(math.ceil(x / 2048.0)) * 2048
+import struct
+
+global instructions_run
+instructions_run = 0
+
+def load_symbols():
+    global symbols
+    with open('elf_symbol_map.csv', 'r') as f:
+        csv = [line.rstrip().split(',') for line in f.readlines()]
+    symbols = []
+    for line in csv:
+        symbols.append((int(line[0], 0x10), line[1]))
+
+def get_symbol(addr):
+    global symbols
+    # Just to speed stuff up, this is a good quick check
+    if addr & 0x80000000 == 0:
+        return None
+    # If not in kernel range 
+    if not addr in range(0x80010000, 0x8008E178):
+        return None
+
+    for i in range(len(symbols)):
+        if symbols[i][0] > addr:
+            return symbols[i-1]
+
+def get_string(addr):
+    s = ""
+    c = uc.mem_read(addr, 1)
+    while c != b'\x00':
+        s += c.decode('latin8')
+        addr += 1
+        c = uc.mem_read(addr, 1)
+    return s
 
 def hook_code(uc, address, size, user_data):
+    global instructions_run
+    instructions_run += 1
     pc = uc.reg_read(UC_MIPS_REG_PC)
     #print(f"PC - {pc:08X}")
-    if pc in range(0x8002D130, 0x8002D194):
-        print("---------------")
-        dump_regs(uc)
-    if pc == 0x8002D194:
-        quit()
+    #if pc in range(0x8002D130, 0x8002D194):
+    #    print("---------------")
+    #    dump_regs(uc)
+    if pc == 0x8002D194: # Infinite loop from bad PRId, hacky fix
+        uc.reg_write(UC_MIPS_REG_T4, 0x1)
+    if pc == 0x8002A9C4: # OsSysHaltEx
+        error = get_string(uc.reg_read(UC_MIPS_REG_A0))
+        filename = get_string(uc.reg_read(UC_MIPS_REG_A1))
+        print(f"\nOsSysHaltEx in {filename}: {error}")
     return True
 
 def dump_regs(uc):
@@ -48,10 +85,27 @@ def dump_regs(uc):
     pc = uc.reg_read(UC_MIPS_REG_PC)
     ra = uc.reg_read(UC_MIPS_REG_RA)
     fp = uc.reg_read(UC_MIPS_REG_FP)
-    print(f"pc {pc:08X} sp {sp:08X}")
+    comment = ""
+    symbol = get_symbol(pc)
+    if symbol != None:
+        offset = pc - symbol[0]
+        comment = f" ({symbol[1]}{'+' + hex(offset) if offset != 0 else ''})"
+    print("\nRegs")
+    print(f"sp {sp:08X} ra {ra:08X} pc {pc:08X}{comment}")
     print(f"v0 {v0:08X} v1 {v1:08X}")
-    print(f"t4 {t4:08X} t3 {t3:08X}")
+    print(f"t0 {t0:08X} t1 {t1:08X} t2 {t2:08X} t3 {t3:08X} t4 {t4:08X}")
 
+def dump_stack(uc):
+    sp = uc.reg_read(UC_MIPS_REG_SP)
+    print("\nStack")
+    for addr in range(sp, sp + 0x30, 0x4):
+        comment = ""
+        value = struct.unpack('<L', uc.mem_read(addr, 0x4))[0]
+        symbol = get_symbol(value)
+        if symbol != None:
+            offset = value - symbol[0]
+            comment = f" | {symbol[1]}{'+' + hex(offset) if offset != 0 else ''}"
+        print(f"{addr:08X}: {value:08X}{comment}")
 
 print("FILELOAD firm_0_COACH_kern.elf")
 file_handle = open('./firm_0_COACH_kern.elf', 'rb')
@@ -80,10 +134,10 @@ uc.mem_map(0xBFC00000, 0xA000)
 PERIPHERIAL_LIST = [
     ("unk_1", (0xB0400000, 0x1000)), #0xB0400840 is written to at the beginning
     ("unk_2", (0xB0801000, 0x1000)), #0xB0801034 is written in CpuInit
-    ("unk_3", (0xB0802000, 0x1000))  # fake read from B0802040
-
+    ("unk_3", (0xB0802000, 0x1000)), # fake read from B0802040
+    ("unk_4", (0xB0800000, 0x1000)), # 0xB08002C8
+    ("dcu",   (0xB8000000, 0x3000)) # 0xB800207C is DRAM Controller attr 1, 0xB8002198 is attr 0
 ]
-
 
 def hook_mem_write(uc, access, address, size, value, user_data):
     pc = uc.reg_read(UC_MIPS_REG_PC)
@@ -103,9 +157,9 @@ def hook_mem_read(uc, access, address, size, value, user_data):
     pc = uc.reg_read(UC_MIPS_REG_PC)
     for p in PERIPHERIAL_LIST:
         if address in range(p[1][0], p[1][0] + p[1][1]):
-            print(f"READ {value:08X} at {address:08X} ({size} bytes)  PC:{pc:08X} | PERIPHERIAL {p[0]}")
+            print(f"READ at {address:08X} ({size} bytes)  PC:{pc:08X} | PERIPHERIAL {p[0]}")
             return True
-    print(f"READ {value:08X} at {address:08X} ({size} bytes)  PC:{pc:08X}")
+    print(f"READ at {address:08X} ({size} bytes)  PC:{pc:08X}")
     return True
 
 def hook_mem_read_unmapped(uc, access, address, size, value, user_data):
@@ -122,11 +176,9 @@ for i, section in enumerate(sections):
         continue
     print(f'LOAD {i:2} {section["sh_flags"] & 0xFF:03b} {section["sh_addr"]:08X} {section["sh_addr"] + section.data_size:08X} {section.name}')
     uc.mem_write(section["sh_addr"], section.data())
-#    if not section.name in [".text", ".bss", ".data"]:
-#        continue
-#    print(section.data_size)
-#    print(f'LOAD {i:2} {section["sh_flags"] & 0xFF:08b} {section["sh_addr"]:08X} {section.name}')
-#    mu.mem_map(section["sh_addr"], roundup(section.data_size))
+
+load_symbols()
+print("SYMBOLS LOADED")
 
 def empty_func(a,b,c,d):
     pass
@@ -144,7 +196,7 @@ try:
     uc.emu_start(entry, 0x8009F6CC)
 except unicorn.UcError as e:
     print(f"ERROR: {e}")
-    dump_regs(uc)
-except:
-    dump_regs(uc)
+dump_regs(uc)
+dump_stack(uc)
+print(f"Run {instructions_run} instructions")
 file_handle.close()
