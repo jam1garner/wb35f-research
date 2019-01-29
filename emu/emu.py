@@ -216,8 +216,20 @@ def hook_mem_write_unmapped(uc, access, address, size, value, user_data):
     print(f"WRITE UNMAPPED {value:08X} at {address:08X} ({size} bytes)  PC:{pc:08X}")
     return True
 
+def handle_hardware_reads(uc, address, size):
+    hardcodedValues = {
+        # COACH hardware revision info (peripherial unk_3)
+        0xB0802040 : 9,
+        0xB0802024 : 0xC12A2,
+    }
+    if address in hardcodedValues:
+        uc.mem_write(address, struct.pack('<L', hardcodedValues[address]))
+
 def hook_mem_read(uc, access, address, size, value, user_data):
     pc = uc.reg_read(UC_MIPS_REG_PC)
+    #if address == 0xB8002010:
+    #    uc.mem_write(0xB8002010, struct.pack('<L', 1))
+    handle_hardware_reads(uc, address, size)
     for p in PERIPHERIAL_LIST:
         if address in range(p[1][0], p[1][0] + p[1][1]):
             if QUIET_LEVEL < 3:
