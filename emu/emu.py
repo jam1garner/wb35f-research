@@ -44,12 +44,48 @@ def get_string(addr):
         c = uc.mem_read(addr, 1)
     return s
 
+cfmt='''\
+(                                  # start of capture group 1
+%                                  # literal "%"
+(?:                                # first option
+(?:[-+0 #]{0,5})                   # optional flags
+(?:\d+|\*)?                        # width
+(?:\.(?:\d+|\*))?                  # precision
+(?:h|l|ll|w|I|I32|I64)?            # size
+[cCdiouxXeEfgGaAnpsSZ]             # type
+) |                                # OR
+%%)                                # literal "%%"
+'''
+
+def printf(uc, printString):
+    specifiers = [m.group(1) for m in re.finditer(cfmt, printString, flags=re.X) if m.group(1) != "%%"]
+    args = []
+    if len(specifiers) > 0:
+        if specifiers[0][-1] == "s":
+            args.append(get_string(uc.reg_read(UC_MIPS_REG_A2)))
+        else:
+            args.append(uc.reg_read(UC_MIPS_REG_A2))
+    if len(specifiers) > 1:
+        if specifiers[1][-1] == "s":
+            args.append(get_string(uc.reg_read(UC_MIPS_REG_A3)))
+        else:
+            args.append(uc.reg_read(UC_MIPS_REG_A3))
+    currentStackPos = 0x10 + uc.reg_read(UC_MIPS_REG_SP)
+    for i in range(len(specifiers) - 2):
+        val = struct.unpack('<L', uc.mem_read(currentStackPos, 4))[0]
+        if specifiers[i+2][-1] == "s":
+            args.append(get_string(val))
+        else:
+            args.append(val)
+        currentStackPos += 0x4
+    print(printString % tuple(args))
+
 def hook_code(uc, address, size, user_data):
     global instructions_run
     instructions_run += 1
     pc = uc.reg_read(UC_MIPS_REG_PC)
     #print(f"PC - {pc:08X}")
-    #if pc in range(0x8002D130, 0x8002D194):
+    #if pc == 0x80039EF4:
     #    print("---------------")
     #    dump_regs(uc)
     if pc == 0x8002D194: # Infinite loop from bad PRId, hacky fix
@@ -57,7 +93,14 @@ def hook_code(uc, address, size, user_data):
     if pc == 0x8002A9C4: # OsSysHaltEx
         error = get_string(uc.reg_read(UC_MIPS_REG_A0))
         filename = get_string(uc.reg_read(UC_MIPS_REG_A1))
+        #uc.emu_stop()
         print(f"\nOsSysHaltEx in {filename}: {error}")
+    if pc == 0x80046AB0: # Printf
+        string = get_string(uc.reg_read(UC_MIPS_REG_A1))
+        #print(f">>> {repr(string)} from {uc.reg_read(UC_MIPS_REG_A1):08X}")
+        printf(uc, string)
+        #dump_regs(uc)
+        uc.reg_write(UC_MIPS_REG_PC, uc.reg_read(UC_MIPS_REG_RA))
     return True
 
 def dump_regs(uc):
