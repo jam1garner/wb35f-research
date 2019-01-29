@@ -5,9 +5,14 @@ from unicorn import *
 from unicorn.mips_const import *
 
 import struct
+import re
 
 global instructions_run
 instructions_run = 0
+# 0 = log everything
+# 1 = log debug prints and hardware access
+# 2 = log debug prints
+QUIET_LEVEL = 2
 
 def load_symbols():
     global symbols
@@ -85,20 +90,29 @@ def dump_regs(uc):
     pc = uc.reg_read(UC_MIPS_REG_PC)
     ra = uc.reg_read(UC_MIPS_REG_RA)
     fp = uc.reg_read(UC_MIPS_REG_FP)
-    comment = ""
+    pcComment = ""
     symbol = get_symbol(pc)
     if symbol != None:
         offset = pc - symbol[0]
-        comment = f" ({symbol[1]}{'+' + hex(offset) if offset != 0 else ''})"
+        pcComment = f" ({symbol[1]}{'+' + hex(offset) if offset != 0 else ''})"
+    raComment = ""
+    symbol = get_symbol(ra)
+    if symbol != None:
+        offset = ra - symbol[0]
+        raComment = f" ({symbol[1]}{'+' + hex(offset) if offset != 0 else ''})"
     print("\nRegs")
-    print(f"sp {sp:08X} ra {ra:08X} pc {pc:08X}{comment}")
-    print(f"v0 {v0:08X} v1 {v1:08X}")
-    print(f"t0 {t0:08X} t1 {t1:08X} t2 {t2:08X} t3 {t3:08X} t4 {t4:08X}")
+    print(f"sp {sp:08X} pc {pc:08X}{pcComment}")
+    print(f"v0 {v0:08X} v1 {v1:08X} ra {ra:08X}{raComment}")
+    print(f"t0 {t0:08X} t1 {t1:08X} t2 {t2:08X} t3 {t3:08X}")
+    print(f"t4 {t4:08X} t5 {t5:08X} t6 {t6:08X} t7 {t7:08X}")
+    print(f"s0 {s0:08X} s1 {s1:08X} s2 {s2:08X} s3 {s3:08X}")
+    print(f"s4 {s4:08X} s5 {s5:08X} s6 {s6:08X} s7 {s7:08X}")
+    print(f"a0 {a0:08X} a1 {a1:08X} a2 {a2:08X} a3 {a3:08X}")
 
 def dump_stack(uc):
     sp = uc.reg_read(UC_MIPS_REG_SP)
     print("\nStack")
-    for addr in range(sp, sp + 0x30, 0x4):
+    for addr in range(sp, sp + 0x50, 0x4):
         comment = ""
         value = struct.unpack('<L', uc.mem_read(addr, 0x4))[0]
         symbol = get_symbol(value)
@@ -132,20 +146,26 @@ uc.mem_map(0xBFC00000, 0xA000)
 
 # Map peripherials(?)
 PERIPHERIAL_LIST = [
-    ("unk_1", (0xB0400000, 0x1000)), #0xB0400840 is written to at the beginning
-    ("unk_2", (0xB0801000, 0x1000)), #0xB0801034 is written in CpuInit
+    ("unk_1", (0xB0400000, 0x1000)), # 0xB0400840 is written to at the beginning
+    ("unk_2", (0xB0801000, 0x1000)), # 0xB0801034 is written in CpuInit
     ("unk_3", (0xB0802000, 0x1000)), # fake read from B0802040
     ("unk_4", (0xB0800000, 0x1000)), # 0xB08002C8
-    ("dcu",   (0xB8000000, 0x3000)) # 0xB800207C is DRAM Controller attr 1, 0xB8002198 is attr 0
+    ("dcu",   (0xB8000000, 0x3000)), # 0xB800207C is DRAM Controller attr 1, 0xB8002198 is attr 0
+    ("unk_5", (0x807FF000, 0x1000)), # 0x807FFF98 is used for somemthing idk
+    #("unk_6", (0x8044C000, 0x1000)), # gonna keep mapping memory till something breaks (0x8044C644)
+    #("unk_7", (0x805CF000, 0x1000)),
+    #("unk_8", (0x8044D000, 0x3000)),
 ]
 
 def hook_mem_write(uc, access, address, size, value, user_data):
     pc = uc.reg_read(UC_MIPS_REG_PC)
     for p in PERIPHERIAL_LIST:
         if address in range(p[1][0], p[1][0] + p[1][1]):
-            print(f"WRITE {value:08X} at {address:08X} ({size} bytes)  PC:{pc:08X} | PERIPHERIAL {p[0]}")
+            if QUIET_LEVEL < 3:
+                print(f"WRITE {value:08X} at {address:08X} ({size} bytes)  PC:{pc:08X} | PERIPHERIAL {p[0]}")
             return True
-    print(f"WRITE {value:08X} at {address:08X} ({size} bytes)  PC:{pc:08X}")
+    if QUIET_LEVEL < 2:
+        print(f"WRITE {value:08X} at {address:08X} ({size} bytes)  PC:{pc:08X}")
     return True
 
 def hook_mem_write_unmapped(uc, access, address, size, value, user_data):
@@ -157,9 +177,11 @@ def hook_mem_read(uc, access, address, size, value, user_data):
     pc = uc.reg_read(UC_MIPS_REG_PC)
     for p in PERIPHERIAL_LIST:
         if address in range(p[1][0], p[1][0] + p[1][1]):
-            print(f"READ at {address:08X} ({size} bytes)  PC:{pc:08X} | PERIPHERIAL {p[0]}")
+            if QUIET_LEVEL < 3:
+                print(f"READ at {address:08X} ({size} bytes)  PC:{pc:08X} | PERIPHERIAL {p[0]}")
             return True
-    print(f"READ at {address:08X} ({size} bytes)  PC:{pc:08X}")
+    if QUIET_LEVEL < 2:
+        print(f"READ at {address:08X} ({size} bytes)  PC:{pc:08X}")
     return True
 
 def hook_mem_read_unmapped(uc, access, address, size, value, user_data):
@@ -198,5 +220,5 @@ except unicorn.UcError as e:
     print(f"ERROR: {e}")
 dump_regs(uc)
 dump_stack(uc)
-print(f"Run {instructions_run} instructions")
+print(f"Ran {instructions_run} instructions")
 file_handle.close()
