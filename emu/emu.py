@@ -88,6 +88,9 @@ def hook_code(uc, address, size, user_data):
     #if pc == 0x80039EF4:
     #    print("---------------")
     #    dump_regs(uc)
+    if pc == 0x80035124:
+        dump_regs(uc)
+        dump_mem(uc.reg_read(UC_MIPS_REG_A0), uc=uc)
     if pc == 0x8002D194: # Infinite loop from bad PRId, hacky fix
         uc.reg_write(UC_MIPS_REG_T4, 0x1)
     if pc == 0x8002A9C4: # OsSysHaltEx
@@ -152,6 +155,13 @@ def dump_regs(uc):
     print(f"s4 {s4:08X} s5 {s5:08X} s6 {s6:08X} s7 {s7:08X}")
     print(f"a0 {a0:08X} a1 {a1:08X} a2 {a2:08X} a3 {a3:08X}")
 
+def dump_mem(addr, lines=3, uc=None):
+    print(" " * 9 + " ".join([f"{((addr % 0x10) + i) % 0x10:02X}" for i in range(0x10)]))
+    for i in range(lines):
+        lineStart = addr+(i*0x10)
+        byte_hex = " ".join([f"{b:02X}" for b in uc.mem_read(lineStart, 0x10)])
+        print(f"{lineStart:08X} {byte_hex}")
+
 def dump_stack(uc):
     sp = uc.reg_read(UC_MIPS_REG_SP)
     print("\nStack")
@@ -191,7 +201,7 @@ uc.mem_map(0xBFC00000, 0xA000)
 PERIPHERIAL_LIST = [
     ("unk_1", (0xB0400000, 0x1000)), # 0xB0400840 is written to at the beginning
     ("unk_2", (0xB0801000, 0x1000)), # 0xB0801034 is written in CpuInit
-    ("unk_3", (0xB0802000, 0x1000)), # fake read from B0802040
+    ("jtag?", (0xB0802000, 0x1000)), # fake read from B0802040
     ("unk_4", (0xB0800000, 0x1000)), # 0xB08002C8
     ("dcu",   (0xB8000000, 0x3000)), # 0xB800207C is DRAM Controller attr 1, 0xB8002198 is attr 0
     ("unk_5", (0x807FF000, 0x1000)), # 0x807FFF98 is used for somemthing idk
@@ -221,14 +231,14 @@ def handle_hardware_reads(uc, address, size):
         # COACH hardware revision info (peripherial unk_3)
         0xB0802040 : 9,
         0xB0802024 : 0xC12A2,
+        # 4 = 0x4000000 bytes = 512 Mb, the capacity of K9F1G08U0E-SCB0000
+        0xB8002010 : 4,
     }
     if address in hardcodedValues:
         uc.mem_write(address, struct.pack('<L', hardcodedValues[address]))
 
 def hook_mem_read(uc, access, address, size, value, user_data):
     pc = uc.reg_read(UC_MIPS_REG_PC)
-    #if address == 0xB8002010:
-    #    uc.mem_write(0xB8002010, struct.pack('<L', 1))
     handle_hardware_reads(uc, address, size)
     for p in PERIPHERIAL_LIST:
         if address in range(p[1][0], p[1][0] + p[1][1]):
